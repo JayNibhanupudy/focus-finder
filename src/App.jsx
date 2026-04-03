@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, query, limitToLast } from 'firebase/database';
 import { db } from './firebase.js';
 import Header from './components/Header.jsx';
 import NavBar from './components/NavBar.jsx';
@@ -35,25 +35,27 @@ export default function App() {
     const fbNodeIds = new Set(nodesWithFirebase.map(n => n.firebaseId));
 
     const unsubscribers = nodesWithFirebase.map(node => {
-      // /nodes/{firebaseId} has the shape: { latest_db, battery_pct, last_seen }
-      // The ESP32 keeps this updated on every reading cycle.
-      const nodeRef = ref(db, `nodes/${node.firebaseId}`);
-      return onValue(nodeRef, (snapshot) => {
-        const fbNode = snapshot.val();
-        if (!fbNode) return;
+      // /readings/{firebaseId} holds push-key children; grab the latest one.
+      const readingsRef = query(ref(db, `readings/${node.firebaseId}`), limitToLast(1));
+      return onValue(readingsRef, (snapshot) => {
+        if (!snapshot.exists()) return;
+        // limitToLast(1) returns a single child; grab its value.
+        let reading;
+        snapshot.forEach(child => { reading = child.val(); });
+        if (!reading) return;
 
-        if (fbNode.latest_db != null) {
+        if (reading.noise_db != null) {
           setNoiseValues(prev => ({
             ...prev,
-            [node.zoneId]: Math.round(fbNode.latest_db),
+            [node.zoneId]: Math.round(reading.noise_db),
           }));
         }
 
         setLiveNodes(prev => prev.map(n =>
           n.id !== node.id ? n : {
             ...n,
-            battery: fbNode.battery_pct ?? n.battery,
-            tamper:  fbNode.tamper      ?? n.tamper,
+            battery: reading.battery_pct ?? n.battery,
+            tamper:  reading.tamper      ?? n.tamper,
             status:  'online',
           }
         ));
