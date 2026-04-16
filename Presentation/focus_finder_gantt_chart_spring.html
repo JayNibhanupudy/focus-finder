@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Focus Finder — Project Timeline</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 2rem; background: #fff; color: #1a1a1a; }
+  @media (prefers-color-scheme: dark) { body { background: #1a1a1a; color: #e8e8e8; } }
+  .gantt { max-width: 900px; margin: 0 auto; }
+  .gantt-title { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+  .gantt-subtitle { font-size: 13px; color: #888; margin-bottom: 20px; }
+  .header-row { display: grid; grid-template-columns: 200px 1fr; border-bottom: 0.5px solid #ddd; padding-bottom: 6px; margin-bottom: 4px; }
+  @media (prefers-color-scheme: dark) { .header-row { border-bottom-color: #333; } }
+  .months { display: grid; grid-template-columns: repeat(16, 1fr); font-size: 12px; color: #888; }
+  .month-label { text-align: center; font-weight: 500; }
+  .task-row { display: grid; grid-template-columns: 200px 1fr; align-items: center; min-height: 34px; border-bottom: 0.5px solid #eee; }
+  @media (prefers-color-scheme: dark) { .task-row { border-bottom-color: #2a2a2a; } }
+  .task-row:hover { background: #f9f9f9; }
+  @media (prefers-color-scheme: dark) { .task-row:hover { background: #222; } }
+  .task-name { font-size: 13px; padding-right: 12px; display: flex; align-items: center; gap: 6px; }
+  .task-bar-area { display: grid; grid-template-columns: repeat(16, 1fr); align-items: center; height: 100%; position: relative; }
+  .task-bar { height: 20px; border-radius: 4px; position: relative; display: flex; align-items: center; justify-content: center; }
+  .bar-complete { background: #97C459; border: 0.5px solid #639922; }
+  .bar-milestone { background: #AFA9EC; border: 0.5px solid #534AB7; }
+  .bar-label { font-size: 10px; font-weight: 500; color: #27500A; white-space: nowrap; }
+  .bar-label-m { font-size: 10px; font-weight: 500; color: #26215C; white-space: nowrap; }
+  .check { color: #639922; font-size: 14px; flex-shrink: 0; }
+  .legend { display: flex; gap: 16px; margin-top: 14px; font-size: 12px; color: #888; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; }
+  .phase-label { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 0 2px; }
+</style>
+</head>
+<body>
+<div class="gantt">
+  <div class="gantt-title">Focus Finder — project timeline</div>
+  <div class="gantt-subtitle">CIS4930 Full Stack IoT Development · Spring 2025 · All tasks completed</div>
+
+  <div class="header-row">
+    <div></div>
+    <div class="months">
+      <div class="month-label" style="grid-column: 1 / span 4;">Jan</div>
+      <div class="month-label" style="grid-column: 5 / span 4;">Feb</div>
+      <div class="month-label" style="grid-column: 9 / span 4;">Mar</div>
+      <div class="month-label" style="grid-column: 13 / span 4;">Apr</div>
+    </div>
+  </div>
+
+  <div class="phase-label">Planning & research</div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Literature review</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 1 / 4;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Requirements & design</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 2 / 5;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> IoT methodology</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 3 / 6;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="phase-label">Hardware & firmware</div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Hardware assembly</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 4 / 7;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> ESP32 firmware (mic + accel)</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 5 / 9;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Tamper detection logic</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 5 / 8;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="phase-label">Cloud & web app</div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Firebase setup & API</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 6 / 9;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Web app (React heat map)</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 7 / 11;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Tamper detection model</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 8 / 11;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="phase-label">Integration & demos</div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> System integration</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 9 / 11;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Midpoint demo</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-milestone" style="grid-column: 10 / 11;"><span class="bar-label-m">&#9670;</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Testing & refinement</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-complete" style="grid-column: 11 / 15;"><span class="bar-label">100%</span></div>
+    </div>
+  </div>
+
+  <div class="task-row">
+    <div class="task-name"><span class="check">&#10003;</span> Final presentation</div>
+    <div class="task-bar-area">
+      <div class="task-bar bar-milestone" style="grid-column: 15 / 16;"><span class="bar-label-m">&#9670;</span></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-swatch" style="background: #97C459; border: 0.5px solid #639922;"></div> Completed task</div>
+    <div class="legend-item"><div class="legend-swatch" style="background: #AFA9EC; border: 0.5px solid #534AB7;"></div> Milestone</div>
+  </div>
+</div>
+</body>
+</html>
