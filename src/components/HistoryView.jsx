@@ -4,9 +4,13 @@ import {
   ResponsiveContainer, ReferenceLine, Cell,
 } from 'recharts';
 import { generateHistoricalData, getChartColor } from '../utils/noiseUtils.js';
+import { MIN_SAMPLES_PER_BUCKET, totalSampleCount } from '../utils/predictionModel.js';
 import './HistoryView.css';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// UI index (0=Mon..6=Sun) -> JS getDay() index (0=Sun..6=Sat)
+const DOW_UI_TO_JS = [1, 2, 3, 4, 5, 6, 0];
 
 // Returns the current JS day (0=Sun…6=Sat) mapped to our Mon-first DAYS array index
 function currentDayIndex() {
@@ -14,13 +18,40 @@ function currentDayIndex() {
   return jsDay === 0 ? 6 : jsDay - 1; // Mon=0 … Sun=6
 }
 
-export default function HistoryView({ zones }) {
+// Merge real bucket averages with the synthetic baseline: use real data when
+// a bucket has enough samples, otherwise fall back to the heuristic so the
+// chart stays complete.
+function mergedHistoricalData(zone, zoneBuckets) {
+  const synthetic = generateHistoricalData(zone);
+  if (!zoneBuckets) return synthetic;
+
+  return synthetic.map((dayEntry, uiDayIdx) => {
+    const jsDow = DOW_UI_TO_JS[uiDayIdx];
+    return {
+      day: dayEntry.day,
+      hours: dayEntry.hours.map((syntheticDb, hour) => {
+        const cell = zoneBuckets[jsDow][hour];
+        if (cell.count >= MIN_SAMPLES_PER_BUCKET) {
+          return Math.round(cell.sum / cell.count);
+        }
+        return syntheticDb;
+      }),
+    };
+  });
+}
+
+export default function HistoryView({ zones, buckets }) {
   const [selectedZoneId, setSelectedZoneId] = useState(zones[0]?.id ?? '');
   const [selectedDayIdx, setSelectedDayIdx] = useState(currentDayIndex());
 
   const zone = zones.find(z => z.id === selectedZoneId) ?? zones[0];
 
-  const histData = useMemo(() => generateHistoricalData(zone), [zone?.id]);
+  const histData = useMemo(
+    () => mergedHistoricalData(zone, buckets?.[zone.id]),
+    [zone?.id, buckets],
+  );
+
+  const zoneSamples = totalSampleCount(buckets?.[zone.id]);
 
   const dayData = histData[selectedDayIdx];
 
@@ -130,7 +161,12 @@ export default function HistoryView({ zones }) {
       </div>
 
       <p className="chart-note">
-        Based on 7-day rolling average &middot; Hours after current time shown at reduced opacity
+        {zoneSamples > 0
+          ? `Based on ${zoneSamples.toLocaleString()} readings from this zone — empty time slots filled with typical patterns`
+          : 'Based on typical patterns — no sensor data yet for this zone'}
+      </p>
+      <p className="chart-note">
+        Hours after current time shown at reduced opacity
       </p>
     </div>
   );

@@ -4,12 +4,27 @@ import {
   ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 import { predictNoise, getNoiseColor, getNoiseTint, getNoiseLabel, getChartColor } from '../utils/noiseUtils.js';
+import { predictFromBuckets, totalSampleCount } from '../utils/predictionModel.js';
 import './PredictView.css';
 
 const ZONE_COLORS = ['#1a3a6b', '#FA4616', '#43A047', '#7B1FA2', '#0288D1'];
 
-export default function PredictView({ noiseValues, nodes, nodeByZone, zones }) {
+export default function PredictView({ noiseValues, nodes, nodeByZone, zones, buckets }) {
   const currentHour = new Date().getHours();
+
+  // Predict dB for a zone N hours from now. Uses real bucket averages when
+  // the (day, hour) cell has enough samples, otherwise falls back to the
+  // hardcoded time-of-day heuristic.
+  function predictFor(zone, hoursFromNow) {
+    const target = new Date();
+    target.setHours(target.getHours() + hoursFromNow);
+    const heuristic = predictNoise(zone, hoursFromNow);
+    return predictFromBuckets(buckets?.[zone.id], target, heuristic).db;
+  }
+
+  // Total real readings across all zones, for the "based on N readings" note.
+  const totalReadings = Object.values(buckets || {})
+    .reduce((sum, b) => sum + totalSampleCount(b), 0);
 
   // Only show zones with an online, non-tampered node
   const activeZones = zones.filter(z => {
@@ -38,12 +53,12 @@ export default function PredictView({ noiseValues, nodes, nodeByZone, zones }) {
       const entry = { label, hoursFromNow: i };
       zones.forEach(z => {
         entry[z.id] = i === 0
-          ? (noiseValues[z.id] ?? predictNoise(z, 0))
-          : predictNoise(z, i);
+          ? (noiseValues[z.id] ?? predictFor(z, 0))
+          : predictFor(z, i);
       });
       return entry;
     });
-  }, [currentHour, noiseValues, zones]);
+  }, [currentHour, noiseValues, zones, buckets]);
 
   // Best zone right now
   const bestNow = activeZones
@@ -51,7 +66,7 @@ export default function PredictView({ noiseValues, nodes, nodeByZone, zones }) {
 
   // Zone that will be quietest in 2 hours
   const bestIn2 = activeZones
-    .sort((a, b) => predictNoise(a, 2) - predictNoise(b, 2))[0];
+    .sort((a, b) => predictFor(a, 2) - predictFor(b, 2))[0];
 
   return (
     <div className="predict-view">
@@ -71,7 +86,7 @@ export default function PredictView({ noiseValues, nodes, nodeByZone, zones }) {
         {bestIn2 && bestIn2.id !== bestNow?.id && <RecommendCard
           label="Best in 2 hrs"
           zone={bestIn2}
-          db={predictNoise(bestIn2, 2)}
+          db={predictFor(bestIn2, 2)}
           hoursLabel="in 2 hrs"
         />}
       </div>
@@ -122,14 +137,21 @@ export default function PredictView({ noiseValues, nodes, nodeByZone, zones }) {
         </ResponsiveContainer>
       </div>
 
-      <p className="chart-note">Dashed lines: Quiet threshold (45 dB) &amp; Loud threshold (65 dB)</p>
+      <p className="chart-note">
+        Dashed lines: Quiet threshold (45 dB) &amp; Loud threshold (65 dB)
+      </p>
+      <p className="chart-note">
+        {totalReadings > 0
+          ? `Based on ${totalReadings.toLocaleString()} historical readings, with typical-pattern fallback for empty time slots`
+          : 'Based on typical patterns — collecting data to train the model'}
+      </p>
 
       {/* Per-zone next-hour summary */}
       <p className="section-label" style={{ marginTop: 20 }}>Zone outlook</p>
       <div className="outlook-list">
         {activeZones.map(z => {
-          const now   = noiseValues[z.id] ?? predictNoise(z, 0);
-          const in1   = predictNoise(z, 1);
+          const now   = noiseValues[z.id] ?? predictFor(z, 0);
+          const in1   = predictFor(z, 1);
           const trend = in1 > now + 3 ? 'up' : in1 < now - 3 ? 'down' : 'flat';
           return (
             <div key={z.id} className="outlook-row">

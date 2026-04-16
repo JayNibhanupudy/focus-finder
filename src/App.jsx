@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, query, limitToLast } from 'firebase/database';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { ref, onValue, query, limitToLast, get, set } from 'firebase/database';
 import { db } from './firebase.js';
 import Header from './components/Header.jsx';
 import NavBar from './components/NavBar.jsx';
@@ -9,11 +9,16 @@ import PredictView from './components/PredictView.jsx';
 import NodesView from './components/NodesView.jsx';
 import { zones, nodes } from './data/mockData.js';
 import { computeInitialNoise, walkNoise } from './utils/noiseUtils.js';
+import { buildZoneBuckets } from './utils/predictionModel.js';
+import { computeLedColors } from './utils/ledColor.js';
 import './App.css';
 
 // Build a lookup: firebaseId -> static node definition
 const FB_ID_TO_NODE = {};
 nodes.forEach(n => { if (n.firebaseId) FB_ID_TO_NODE[n.firebaseId] = n; });
+
+// Cap on how many historical readings we pull per node for bucket computation.
+const HISTORY_LIMIT = 10000;
 
 function buildInitialNoise() {
   const result = {};
@@ -26,6 +31,10 @@ export default function App() {
   const [noiseValues, setNoiseValues] = useState(buildInitialNoise);
   const [liveNodes, setLiveNodes]     = useState([...nodes]);
   const [secondsSince, setSecondsSince] = useState(0);
+  const [buckets, setBuckets]         = useState({}); // zoneId -> prediction buckets
+
+  // Last LED colour written to Firebase per firebaseId — used to skip redundant writes.
+  const lastLedColorsRef = useRef({});
 
   useEffect(() => {
     // ── Firebase listeners — one per node at nodes/$nodeId ─────────────────
@@ -64,6 +73,21 @@ export default function App() {
       });
     });
 
+    // ── One-shot history fetch: build prediction buckets per zone ─────────
+    nodesWithFirebase.forEach(async (node) => {
+      try {
+        const snap = await get(query(
+          ref(db, `readings/${node.firebaseId}`),
+          limitToLast(HISTORY_LIMIT),
+        ));
+        if (!snap.exists()) return;
+        const zoneBuckets = buildZoneBuckets(snap.val());
+        setBuckets(prev => ({ ...prev, [node.zoneId]: zoneBuckets }));
+      } catch (err) {
+        console.warn(`History fetch failed for ${node.firebaseId}:`, err);
+      }
+    });
+
     // ── Mock walk for nodes not yet in Firebase (keeps demo looking alive) ─
     const mockTimer = setInterval(() => {
       setNoiseValues(prev => {
@@ -88,6 +112,20 @@ export default function App() {
     };
   }, []);
 
+  // ── LED colour: compute median-split colours and push changes to Firebase ─
+  // Runs whenever a node's dB or status changes. Only nodes whose desired
+  // colour differs from the last-written value are pushed, so Firebase writes
+  // stay proportional to actual colour flips (not every reading update).
+  useEffect(() => {
+    const colors = computeLedColors(liveNodes, noiseValues, lastLedColorsRef.current);
+    Object.entries(colors).forEach(([firebaseId, color]) => {
+      if (lastLedColorsRef.current[firebaseId] === color) return;
+      set(ref(db, `nodes/${firebaseId}/led_color`), color)
+        .then(() => { lastLedColorsRef.current[firebaseId] = color; })
+        .catch(err => console.warn(`LED colour write failed (${firebaseId}):`, err));
+    });
+  }, [liveNodes, noiseValues]);
+
   // Derive nodeByZone from live (possibly Firebase-updated) node list
   const nodeByZone = useMemo(() => {
     const map = {};
@@ -95,7 +133,7 @@ export default function App() {
     return map;
   }, [liveNodes]);
 
-  const sharedProps = { noiseValues, nodes: liveNodes, nodeByZone, zones };
+  const sharedProps = { noiseValues, nodes: liveNodes, nodeByZone, zones, buckets };
 
   return (
     <div className="app">
