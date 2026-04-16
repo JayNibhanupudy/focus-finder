@@ -30,8 +30,8 @@ uint8_t gatewayMAC[] = {0x00, 0x70, 0x07, 0xE9, 0x96, 0x5C};
 
 const float DB_OFFSET = 55.0;
 
-float latestAvgDb = 0.0;
-bool avgDbReceived = false;
+bool loudQuietReceived = false;
+bool isLoudFromGateway = false;
 
 typedef struct __attribute__((packed)) {
   char     nodeId[16];
@@ -47,32 +47,29 @@ typedef struct __attribute__((packed)) {
 } SensorPayload;
 
 typedef struct __attribute__((packed)) {
-  float avg_db;
-} AvgPayload;
+  bool is_loud;
+} LoudQuietPayload;
 
 int16_t accelX, accelY, accelZ;
 int16_t gyroX, gyroY, gyroZ;
 int16_t temperatureRaw;
 
-void updateLeds(float localDb) {
+void updateLeds() {
   bool linkAlive = (millis() - lastGatewayContactTime) <= LINK_TIMEOUT_MS;
 
   digitalWrite(GREEN_LED_PIN, linkAlive ? HIGH : LOW);
 
-  if (!avgDbReceived) {
+  if (!loudQuietReceived) {
     digitalWrite(BLUE_LED_PIN, LOW);
     digitalWrite(RED_LED_PIN, LOW);
     return;
   }
 
-  if (localDb < latestAvgDb) {
-    digitalWrite(BLUE_LED_PIN, HIGH);
-    digitalWrite(RED_LED_PIN, LOW);
-  } else if (localDb > latestAvgDb) {
+  if (isLoudFromGateway) {
     digitalWrite(BLUE_LED_PIN, LOW);
     digitalWrite(RED_LED_PIN, HIGH);
   } else {
-    digitalWrite(BLUE_LED_PIN, LOW);
+    digitalWrite(BLUE_LED_PIN, HIGH);
     digitalWrite(RED_LED_PIN, LOW);
   }
 }
@@ -87,16 +84,16 @@ void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
 }
 
 void onDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData, int len) {
-  if (len == sizeof(AvgPayload)) {
-    AvgPayload incoming = {};
+  if (len == sizeof(LoudQuietPayload)) {
+    LoudQuietPayload incoming = {};
     memcpy(&incoming, incomingData, sizeof(incoming));
 
-    latestAvgDb = incoming.avg_db;
-    avgDbReceived = true;
+    isLoudFromGateway = incoming.is_loud;
+    loudQuietReceived = true;
     lastGatewayContactTime = millis();
 
-    Serial.print("Received avg_db: ");
-    Serial.println(latestAvgDb, 2);
+    Serial.print("Received is_loud: ");
+    Serial.println(isLoudFromGateway ? "true" : "false");
   } else {
     Serial.print("Received unexpected packet length: ");
     Serial.println(len);
@@ -251,7 +248,7 @@ void setup() {
 
 void loop() {
   if (millis() - lastSendTime < SEND_INTERVAL_MS) {
-    updateLeds(getNoiseDb());
+    updateLeds();
     delay(50);
     return;
   }
@@ -260,7 +257,7 @@ void loop() {
 
   if (!readMPU()) {
     Serial.println("MPU read failed, skipping");
-    updateLeds(0.0);
+    updateLeds();
     return;
   }
 
@@ -276,12 +273,13 @@ void loop() {
   data.distance_cm = getDistanceCm();
   data.timestamp = millis();
 
-  updateLeds(data.noise_db);
+  updateLeds();
 
-  Serial.printf("TX: ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f avg_db=%.2f\n",
+  Serial.printf("TX: ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f loud=%s\n",
     data.accel_x, data.accel_y, data.accel_z,
     data.gyro_x, data.gyro_y, data.gyro_z,
-    data.noise_db, data.distance_cm, latestAvgDb);
+    data.noise_db, data.distance_cm,
+    loudQuietReceived ? (isLoudFromGateway ? "true" : "false") : "unknown");
 
   esp_err_t result = esp_now_send(gatewayMAC, (uint8_t *)&data, sizeof(data));
   if (result != ESP_OK) {
