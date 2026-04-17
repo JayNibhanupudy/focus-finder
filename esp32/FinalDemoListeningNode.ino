@@ -21,14 +21,12 @@
 #define BLUE_LED_PIN  33
 #define RED_LED_PIN   27
 
-const unsigned long SEND_INTERVAL_MS = 3000;
+const unsigned long SEND_INTERVAL_MS = 500;
 const unsigned long LINK_TIMEOUT_MS = 10000;
 unsigned long lastSendTime = 0;
 unsigned long lastGatewayContactTime = 0;
 
 uint8_t gatewayMAC[] = {0x00, 0x70, 0x07, 0xE9, 0x96, 0x5C};
-
-const float DB_OFFSET = 55.0;
 
 bool loudQuietReceived = false;
 bool isLoudFromGateway = false;
@@ -166,30 +164,48 @@ float getDistanceCm() {
 }
 
 float getNoiseDb() {
+  static float smoothedDb = 0.0;
+  static bool initialized = false;
+
   int32_t buffer[256];
   size_t bytes_read = 0;
 
   i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, portMAX_DELAY);
 
   int samples = bytes_read / sizeof(int32_t);
-  if (samples == 0) return 0.0;
+  if (samples == 0) {
+    return initialized ? smoothedDb : 0.0;
+  }
 
   double sumSquares = 0.0;
 
   for (int i = 0; i < samples; i++) {
-    int32_t sample = buffer[i] >> 14;
-    double s = (double)sample;
+    int32_t raw = buffer[i] >> 8;
+
+    if (raw & 0x800000) {
+      raw |= ~0xFFFFFF;
+    }
+
+    double s = (double)raw / 8388608.0;
     sumSquares += s * s;
   }
 
   double rms = sqrt(sumSquares / samples);
 
-  if (rms < 1.0) {
-    rms = 1.0;
+  if (rms < 1e-6) {
+    rms = 1e-6;
   }
 
-  float db = 20.0 * log10(rms) + DB_OFFSET;
-  return db;
+  float db = 20.0 * log10(rms) + 70.0;
+
+  if (!initialized) {
+    smoothedDb = db;
+    initialized = true;
+  } else {
+    smoothedDb = 0.7f * smoothedDb + 0.3f * db;
+  }
+
+  return smoothedDb;
 }
 
 void setup() {
@@ -249,7 +265,7 @@ void setup() {
 void loop() {
   if (millis() - lastSendTime < SEND_INTERVAL_MS) {
     updateLeds();
-    delay(50);
+    delay(10);
     return;
   }
 
