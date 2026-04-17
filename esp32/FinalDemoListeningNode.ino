@@ -21,6 +21,8 @@
 #define BLUE_LED_PIN  33
 #define RED_LED_PIN   27
 
+#define MIC_DB_OFFSET 90.0f
+
 const unsigned long SEND_INTERVAL_MS = 500;
 const unsigned long LINK_TIMEOUT_MS = 10000;
 unsigned long lastSendTime = 0;
@@ -164,45 +166,42 @@ float getDistanceCm() {
 }
 
 float getNoiseDb() {
-  static float smoothedDb = 0.0;
-  static bool initialized = false;
+  
+  static float smoothedDb = 0.0f;
+  static bool  initialized = false;
+  static int32_t buffer[256];
 
-  int32_t buffer[256];
   size_t bytes_read = 0;
 
-  i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, portMAX_DELAY);
+  esp_err_t err = i2s_read(I2S_NUM_0, buffer, sizeof(buffer),
+                           &bytes_read, pdMS_TO_TICKS(100));
+  if (err != ESP_OK || bytes_read == 0) {
+    return initialized ? smoothedDb : 0.0f;
+  }
 
   int samples = bytes_read / sizeof(int32_t);
   if (samples == 0) {
-    return initialized ? smoothedDb : 0.0;
+    return initialized ? smoothedDb : 0.0f;
   }
 
   double sumSquares = 0.0;
-
   for (int i = 0; i < samples; i++) {
-    int32_t raw = buffer[i] >> 8;
-
-    if (raw & 0x800000) {
-      raw |= ~0xFFFFFF;
-    }
-
-    double s = (double)raw / 8388608.0;
+    int32_t s24 = buffer[i] >> 8;
+    double s = (double)s24 / 8388608.0;
     sumSquares += s * s;
   }
 
   double rms = sqrt(sumSquares / samples);
+  if (rms < 1e-6) rms = 1e-6;
 
-  if (rms < 1e-6) {
-    rms = 1e-6;
-  }
 
-  float db = 20.0 * log10(rms) + 70.0;
+  float db = 20.0f * log10f((float)rms) + MIC_DB_OFFSET;
 
   if (!initialized) {
     smoothedDb = db;
     initialized = true;
   } else {
-    smoothedDb = 0.7f * smoothedDb + 0.3f * db;
+    smoothedDb = 0.6f * smoothedDb + 0.4f * db;
   }
 
   return smoothedDb;
