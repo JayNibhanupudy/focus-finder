@@ -5,6 +5,7 @@
 #include <esp_wifi.h>
 #include <driver/i2s.h>
 #include <math.h>
+#include <string.h>
 
 #define I2S_WS    25
 #define I2S_SD    23
@@ -30,8 +31,8 @@ unsigned long lastGatewayContactTime = 0;
 
 uint8_t gatewayMAC[] = {0x00, 0x70, 0x07, 0xE9, 0x96, 0x5C};
 
-bool loudQuietReceived = false;
-bool isLoudFromGateway = false;
+bool ledColorReceived = false;
+char currentLedColor[16] = "";
 
 typedef struct __attribute__((packed)) {
   char     nodeId[16];
@@ -47,8 +48,8 @@ typedef struct __attribute__((packed)) {
 } SensorPayload;
 
 typedef struct __attribute__((packed)) {
-  bool is_loud;
-} LoudQuietPayload;
+  char led_color[16];
+} LedColorPayload;
 
 int16_t accelX, accelY, accelZ;
 int16_t gyroX, gyroY, gyroZ;
@@ -57,19 +58,22 @@ int16_t temperatureRaw;
 void updateLeds() {
   bool linkAlive = (millis() - lastGatewayContactTime) <= LINK_TIMEOUT_MS;
 
-  digitalWrite(GREEN_LED_PIN, linkAlive ? HIGH : LOW);
+  digitalWrite(BLUE_LED_PIN, linkAlive ? HIGH : LOW);
 
-  if (!loudQuietReceived) {
-    digitalWrite(BLUE_LED_PIN, LOW);
+  if (!ledColorReceived) {
+    digitalWrite(GREEN_LED_PIN, LOW);
     digitalWrite(RED_LED_PIN, LOW);
     return;
   }
 
-  if (isLoudFromGateway) {
-    digitalWrite(BLUE_LED_PIN, LOW);
+  if (strcmp(currentLedColor, "green") == 0) {
+    digitalWrite(GREEN_LED_PIN, HIGH);
+    digitalWrite(RED_LED_PIN, LOW);
+  } else if (strcmp(currentLedColor, "red") == 0) {
+    digitalWrite(GREEN_LED_PIN, LOW);
     digitalWrite(RED_LED_PIN, HIGH);
   } else {
-    digitalWrite(BLUE_LED_PIN, HIGH);
+    digitalWrite(GREEN_LED_PIN, LOW);
     digitalWrite(RED_LED_PIN, LOW);
   }
 }
@@ -84,16 +88,18 @@ void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
 }
 
 void onDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData, int len) {
-  if (len == sizeof(LoudQuietPayload)) {
-    LoudQuietPayload incoming = {};
+  if (len == sizeof(LedColorPayload)) {
+    LedColorPayload incoming = {};
     memcpy(&incoming, incomingData, sizeof(incoming));
 
-    isLoudFromGateway = incoming.is_loud;
-    loudQuietReceived = true;
+    strncpy(currentLedColor, incoming.led_color, sizeof(currentLedColor) - 1);
+    currentLedColor[sizeof(currentLedColor) - 1] = '\0';
+
+    ledColorReceived = true;
     lastGatewayContactTime = millis();
 
-    Serial.print("Received is_loud: ");
-    Serial.println(isLoudFromGateway ? "true" : "false");
+    Serial.print("Received led_color: ");
+    Serial.println(currentLedColor);
   } else {
     Serial.print("Received unexpected packet length: ");
     Serial.println(len);
@@ -166,15 +172,13 @@ float getDistanceCm() {
 }
 
 float getNoiseDb() {
-  
   static float smoothedDb = 0.0f;
-  static bool  initialized = false;
+  static bool initialized = false;
   static int32_t buffer[256];
 
   size_t bytes_read = 0;
 
-  esp_err_t err = i2s_read(I2S_NUM_0, buffer, sizeof(buffer),
-                           &bytes_read, pdMS_TO_TICKS(100));
+  esp_err_t err = i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, pdMS_TO_TICKS(100));
   if (err != ESP_OK || bytes_read == 0) {
     return initialized ? smoothedDb : 0.0f;
   }
@@ -193,7 +197,6 @@ float getNoiseDb() {
 
   double rms = sqrt(sumSquares / samples);
   if (rms < 1e-6) rms = 1e-6;
-
 
   float db = 20.0f * log10f((float)rms) + MIC_DB_OFFSET;
 
@@ -290,11 +293,11 @@ void loop() {
 
   updateLeds();
 
-  Serial.printf("TX: ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f loud=%s\n",
+  Serial.printf("TX: ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f led_color=%s\n",
     data.accel_x, data.accel_y, data.accel_z,
     data.gyro_x, data.gyro_y, data.gyro_z,
     data.noise_db, data.distance_cm,
-    loudQuietReceived ? (isLoudFromGateway ? "true" : "false") : "unknown");
+    ledColorReceived ? currentLedColor : "unknown");
 
   esp_err_t result = esp_now_send(gatewayMAC, (uint8_t *)&data, sizeof(data));
   if (result != ESP_OK) {
