@@ -188,7 +188,7 @@ void sendToFirebase(const SensorPayload &d) {
   }
 
   String json = buildJson(d);
-  String url = String(FIREBASE_DB_URL) + "/readings/" + String(d.nodeId) + ".json";
+  String url = String(FIREBASE_DB_URL) + "/validated_data/" + String(d.nodeId) + ".json";
 
   WiFiClientSecure client;
   client.setInsecure();

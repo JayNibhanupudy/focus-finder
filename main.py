@@ -42,7 +42,7 @@ def analyze_reading(node_id, reading):
         return
 
     # Load last 200 readings for training
-    readings_ref = db.reference(f"/readings/{node_id}")
+    readings_ref = db.reference(f"/validated_data/{node_id}")
     snapshot = readings_ref.order_by_key().limit_to_last(200).get()
 
     if not snapshot:
@@ -91,7 +91,7 @@ def main():
     seen_keys = {}
 
     # Load existing keys so we don't reprocess old data
-    all_readings = db.reference("/readings").get() or {}
+    all_readings = db.reference("/validated_data").get() or {}
     for node_id, readings in all_readings.items():
         if isinstance(readings, dict):
             seen_keys[node_id] = set(readings.keys())
@@ -100,7 +100,7 @@ def main():
     print("Polling for new readings every 5 seconds...\n")
 
     while True:
-        all_readings = db.reference("/readings").get() or {}
+        all_readings = db.reference("/validated_data").get() or {}
 
         for node_id, readings in all_readings.items():
             if not isinstance(readings, dict):

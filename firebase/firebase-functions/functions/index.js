@@ -27,7 +27,7 @@ exports.submitReading = onRequest(async (req, res) => {
 
   const timestamp = Date.now();
 
-  await db.ref(`readings/${node_id}`).push({
+  await db.ref(`validated_data/${node_id}`).push({
     noise_db, accel_x, accel_y, accel_z,
     gyro_x, gyro_y, gyro_z, ultrasonic_cm,
     battery_pct, timestamp,

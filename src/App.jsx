@@ -20,6 +20,8 @@ nodes.forEach(n => { if (n.firebaseId) FB_ID_TO_NODE[n.firebaseId] = n; });
 // Cap on how many historical readings we pull per node for bucket computation.
 const HISTORY_LIMIT = 10000;
 
+const LED_WRITABLE_NODE_IDS = new Set(['node_01', 'node_02']);
+
 function buildInitialNoise() {
   const result = {};
   zones.forEach(zone => { result[zone.id] = computeInitialNoise(zone); });
@@ -44,8 +46,8 @@ export default function App() {
     const fbNodeIds = new Set(nodesWithFirebase.map(n => n.firebaseId));
 
     const unsubscribers = nodesWithFirebase.map(node => {
-      // /readings/{firebaseId} holds push-key children; grab the latest one.
-      const readingsRef = query(ref(db, `readings/${node.firebaseId}`), limitToLast(1));
+      // /validated_data/{firebaseId} holds push-key children; grab the latest one.
+      const readingsRef = query(ref(db, `validated_data/${node.firebaseId}`), limitToLast(1));
       return onValue(readingsRef, (snapshot) => {
         if (!snapshot.exists()) return;
         // limitToLast(1) returns a single child; grab its value.
@@ -77,7 +79,7 @@ export default function App() {
     nodesWithFirebase.forEach(async (node) => {
       try {
         const snap = await get(query(
-          ref(db, `readings/${node.firebaseId}`),
+          ref(db, `validated_data/${node.firebaseId}`),
           limitToLast(HISTORY_LIMIT),
         ));
         if (!snap.exists()) return;
@@ -117,7 +119,8 @@ export default function App() {
   // colour differs from the last-written value are pushed, so Firebase writes
   // stay proportional to actual colour flips (not every reading update).
   useEffect(() => {
-    const colors = computeLedColors(liveNodes, noiseValues, lastLedColorsRef.current);
+    const ledWritableNodes = liveNodes.filter(n => LED_WRITABLE_NODE_IDS.has(n.firebaseId));
+    const colors = computeLedColors(ledWritableNodes, noiseValues, lastLedColorsRef.current);
     Object.entries(colors).forEach(([firebaseId, color]) => {
       if (lastLedColorsRef.current[firebaseId] === color) return;
       set(ref(db, `nodes/${firebaseId}/led_color`), color)
