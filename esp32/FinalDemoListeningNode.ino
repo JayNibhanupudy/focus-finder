@@ -29,7 +29,7 @@ const unsigned long LINK_TIMEOUT_MS = 10000;
 unsigned long lastSendTime = 0;
 unsigned long lastGatewayContactTime = 0;
 
-uint8_t gatewayMAC[] = {0x00, 0x70, 0x07, 0xE9, 0x96, 0x5C};
+uint8_t gatewayMAC[] = {0x6C, 0xC8, 0x40, 0x78, 0xEB, 0xC0};
 
 bool ledColorReceived = false;
 char currentLedColor[16] = "";
@@ -51,9 +51,9 @@ typedef struct __attribute__((packed)) {
   char led_color[16];
 } LedColorPayload;
 
-int16_t accelX, accelY, accelZ;
-int16_t gyroX, gyroY, gyroZ;
-int16_t temperatureRaw;
+int16_t accelX = 0, accelY = 0, accelZ = 0;
+int16_t gyroX = 0, gyroY = 0, gyroZ = 0;
+int16_t temperatureRaw = 0;
 
 void updateLeds() {
   bool linkAlive = (millis() - lastGatewayContactTime) <= LINK_TIMEOUT_MS;
@@ -132,6 +132,8 @@ void setupMic() {
 
 bool setupMPU() {
   Wire.begin(MPU_SDA, MPU_SCL);
+  Wire.setClock(100000);
+  delay(100);
 
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x6B);
@@ -142,10 +144,17 @@ bool setupMPU() {
 bool readMPU() {
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x3B);
-  if (Wire.endTransmission(false) != 0) return false;
+  uint8_t txStatus = Wire.endTransmission(false);
+  if (txStatus != 0) {
+    Serial.printf("MPU tx failed: %u\n", txStatus);
+    return false;
+  }
 
-  Wire.requestFrom(MPU_ADDR, (uint8_t)14);
-  if (Wire.available() < 14) return false;
+  uint8_t count = Wire.requestFrom(MPU_ADDR, (uint8_t)14);
+  if (count < 14) {
+    Serial.printf("MPU requestFrom got %u bytes\n", count);
+    return false;
+  }
 
   accelX = (Wire.read() << 8) | Wire.read();
   accelY = (Wire.read() << 8) | Wire.read();
@@ -273,10 +282,14 @@ void loop() {
 
   lastSendTime = millis();
 
-  if (!readMPU()) {
-    Serial.println("MPU read failed, skipping");
-    updateLeds();
-    return;
+  bool mpuOk = readMPU();
+  if (!mpuOk) {
+    delay(5);
+    mpuOk = readMPU();
+  }
+
+  if (!mpuOk) {
+    Serial.println("MPU read failed, using previous values");
   }
 
   SensorPayload data = {};
