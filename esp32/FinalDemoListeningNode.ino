@@ -25,15 +25,12 @@
 
 #define MIC_DB_OFFSET 90.0f
 
-// Watchdog timeout in seconds — if loop() blocks longer than this, the board reboots
 #define WDT_TIMEOUT_S 15
 
 const unsigned long SEND_INTERVAL_MS = 2000;
-const unsigned long LINK_TIMEOUT_MS = 10000;
 unsigned long lastSendTime = 0;
 unsigned long lastGatewayContactTime = 0;
 
-// Debug: track loop iterations and timing
 unsigned long loopCount = 0;
 unsigned long lastHeapReport = 0;
 
@@ -41,6 +38,7 @@ uint8_t gatewayMAC[] = {0x6C, 0xC8, 0x40, 0x77, 0x6D, 0x0C};
 
 bool ledColorReceived = false;
 char currentLedColor[16] = "";
+bool tamperDetected = false;
 
 typedef struct __attribute__((packed)) {
   char     nodeId[16];
@@ -57,16 +55,15 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
   char led_color[16];
-} LedColorPayload;
+  bool tamper_detected;
+} NodeStatusPayload;
 
 int16_t accelX = 0, accelY = 0, accelZ = 0;
 int16_t gyroX = 0, gyroY = 0, gyroZ = 0;
 int16_t temperatureRaw = 0;
 
 void updateLeds() {
-  bool linkAlive = (millis() - lastGatewayContactTime) <= LINK_TIMEOUT_MS;
-
-  digitalWrite(BLUE_LED_PIN, linkAlive ? HIGH : LOW);
+  digitalWrite(BLUE_LED_PIN, tamperDetected ? HIGH : LOW);
 
   if (!ledColorReceived) {
     digitalWrite(GREEN_LED_PIN, LOW);
@@ -96,21 +93,25 @@ void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
 }
 
 void onDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData, int len) {
-  if (len == sizeof(LedColorPayload)) {
-    LedColorPayload incoming = {};
+  if (len == sizeof(NodeStatusPayload)) {
+    NodeStatusPayload incoming = {};
     memcpy(&incoming, incomingData, sizeof(incoming));
 
     bool ledColorChanged = strncmp(currentLedColor, incoming.led_color, sizeof(currentLedColor)) != 0;
+    bool tamperChanged = (tamperDetected != incoming.tamper_detected);
 
     strncpy(currentLedColor, incoming.led_color, sizeof(currentLedColor) - 1);
     currentLedColor[sizeof(currentLedColor) - 1] = '\0';
 
+    tamperDetected = incoming.tamper_detected;
     ledColorReceived = true;
     lastGatewayContactTime = millis();
 
-    if (ledColorChanged) {
+    if (ledColorChanged || tamperChanged) {
       Serial.print("Received led_color: ");
-      Serial.println(currentLedColor);
+      Serial.print(currentLedColor);
+      Serial.print(" | tamper_detected: ");
+      Serial.println(tamperDetected ? "true" : "false");
     }
   } else {
     Serial.print("Received unexpected packet length: ");
@@ -145,12 +146,10 @@ void setupMic() {
   Serial.printf("[DEBUG] I2S set pin: %s\n", esp_err_to_name(err));
 }
 
-// --- I2C bus recovery: clocks SCL manually to release a stuck SDA line ---
 void recoverI2C() {
   Serial.println("[DEBUG] Attempting I2C bus recovery...");
   Wire.end();
 
-  // Manually clock SCL to release a stuck SDA
   pinMode(MPU_SCL, OUTPUT);
   pinMode(MPU_SDA, INPUT);
   for (int i = 0; i < 16; i++) {
@@ -160,7 +159,6 @@ void recoverI2C() {
     delayMicroseconds(5);
   }
 
-  // Re-init I2C
   Wire.begin(MPU_SDA, MPU_SCL);
   Wire.setClock(100000);
   Wire.setTimeOut(100);
@@ -171,7 +169,7 @@ void recoverI2C() {
 bool setupMPU() {
   Wire.begin(MPU_SDA, MPU_SCL);
   Wire.setClock(100000);
-  Wire.setTimeOut(100);  // 100ms timeout to prevent I2C hangs
+  Wire.setTimeOut(100);
   delay(100);
 
   Wire.beginTransmission(MPU_ADDR);
@@ -239,16 +237,14 @@ float getNoiseDb() {
   unsigned long start = millis();
   size_t bytes_read = 0;
 
-  // --- Drain stale DMA buffers so we read fresh audio ---
   int drainCount = 0;
   while (drainCount < 16) {
-    esp_err_t err = i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, 0);  // non-blocking
+    esp_err_t err = i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, 0);
     if (err != ESP_OK || bytes_read == 0) break;
     drainCount++;
   }
   Serial.printf("[DEBUG] I2S drained %d stale buffers (%lu ms)\n", drainCount, millis() - start);
 
-  // --- Now read one fresh buffer with a short timeout ---
   esp_err_t err = i2s_read(I2S_NUM_0, buffer, sizeof(buffer), &bytes_read, pdMS_TO_TICKS(200));
   if (err != ESP_OK || bytes_read == 0) {
     Serial.printf("[DEBUG] I2S fresh read failed: err=%s bytes=%u (%lu ms)\n",
@@ -293,14 +289,13 @@ void setup() {
   Serial.printf("[DEBUG] Free heap at boot: %u bytes\n", ESP.getFreeHeap());
   Serial.printf("[DEBUG] CPU freq: %u MHz\n", ESP.getCpuFreqMHz());
 
-  // --- Watchdog setup (new API for ESP-IDF 5.x / Arduino ESP32 core 3.x) ---
   esp_task_wdt_config_t wdt_config = {
     .timeout_ms = WDT_TIMEOUT_S * 1000,
     .idle_core_mask = 0,
     .trigger_panic = true
   };
   esp_task_wdt_init(&wdt_config);
-  esp_task_wdt_add(NULL);  // add current task (loopTask)
+  esp_task_wdt_add(NULL);
   Serial.printf("[DEBUG] Watchdog enabled: %d second timeout\n", WDT_TIMEOUT_S);
 
   pinMode(TRIG_PIN, OUTPUT);
@@ -325,7 +320,6 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  // Give the radio time to fully initialize
   delay(100);
 
   const uint8_t GATEWAY_CHANNEL = 6;
@@ -334,7 +328,6 @@ void setup() {
   Serial.print("Sensor node MAC: ");
   Serial.println(WiFi.macAddress());
 
-  // If MAC is all zeros, the WiFi radio didn't start properly
   if (WiFi.macAddress() == "00:00:00:00:00:00") {
     Serial.println("[WARN] WiFi MAC is null — radio may not be initialized properly");
   }
@@ -363,10 +356,8 @@ void setup() {
 }
 
 void loop() {
-  // --- Feed the watchdog every loop iteration ---
   esp_task_wdt_reset();
 
-  // --- Periodic heap/status report every 10 seconds ---
   if (millis() - lastHeapReport >= 10000) {
     lastHeapReport = millis();
     Serial.printf("[HEALTH] loop=%lu uptime=%lu ms heap=%u minHeap=%u\n",
@@ -385,7 +376,6 @@ void loop() {
   unsigned long cycleStart = millis();
   Serial.printf("\n--- Cycle %lu ---\n", loopCount);
 
-  // --- MPU read with debug ---
   Serial.println("[DEBUG] Reading MPU...");
   unsigned long stepStart = millis();
   bool mpuOk = readMPU();
@@ -399,19 +389,16 @@ void loop() {
   }
   Serial.printf("[DEBUG] MPU step total: %lu ms\n", millis() - stepStart);
 
-  // --- Noise read with debug ---
   Serial.println("[DEBUG] Reading noise...");
   stepStart = millis();
   float noiseDb = getNoiseDb();
   Serial.printf("[DEBUG] Noise step total: %lu ms\n", millis() - stepStart);
 
-  // --- Distance read with debug ---
   Serial.println("[DEBUG] Reading distance...");
   stepStart = millis();
   float distCm = getDistanceCm();
   Serial.printf("[DEBUG] Distance step total: %lu ms\n", millis() - stepStart);
 
-  // --- Build and send payload ---
   SensorPayload data = {};
   strncpy(data.nodeId, "node_01", sizeof(data.nodeId));
   data.accel_x = accelX / 16384.0;
@@ -426,11 +413,12 @@ void loop() {
 
   updateLeds();
 
-  Serial.printf("TX: ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f led_color=%s\n",
+  Serial.printf("TX: ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f led_color=%s tamper=%s\n",
     data.accel_x, data.accel_y, data.accel_z,
     data.gyro_x, data.gyro_y, data.gyro_z,
     data.noise_db, data.distance_cm,
-    ledColorReceived ? currentLedColor : "unknown");
+    ledColorReceived ? currentLedColor : "unknown",
+    tamperDetected ? "true" : "false");
 
   Serial.println("[DEBUG] Sending ESP-NOW...");
   stepStart = millis();
