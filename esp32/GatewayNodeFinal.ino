@@ -24,7 +24,8 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
   char led_color[16];
-} LedColorPayload;
+  bool tamper_detected;
+} NodeStatusPayload;
 
 typedef struct {
   SensorPayload data;
@@ -254,30 +255,7 @@ String fetchLedColor(const char *nodeId) {
   return "";
 }
 
-void sendLedColorToNode(const uint8_t *destMac, const String &ledColor) {
-  if (!ensurePeer(destMac)) {
-    return;
-  }
-
-  LedColorPayload payload = {};
-  ledColor.toCharArray(payload.led_color, sizeof(payload.led_color));
-
-  esp_err_t result = esp_now_send(destMac, (uint8_t *)&payload, sizeof(payload));
-
-  Serial.print("Sending led_color='");
-  Serial.print(ledColor);
-  Serial.print("' to ");
-  printMac(destMac);
-  Serial.print(" -> ");
-
-  if (result == ESP_OK) {
-    Serial.println("OK");
-  } else {
-    Serial.printf("FAIL (%d)\n", result);
-  }
-}
-
-void checkTamperStatus(const char *nodeId) {
+bool fetchTamperStatus(const char *nodeId) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi disconnected — reconnecting...");
     connectToWiFi();
@@ -295,15 +273,47 @@ void checkTamperStatus(const char *nodeId) {
     if (code == 200) {
       String response = https.getString();
       response.trim();
+      https.end();
+
       Serial.print("tamper_detected for ");
       Serial.print(nodeId);
       Serial.print(": ");
       Serial.println(response);
+
+      return response == "true";
     } else {
       Serial.printf("Tamper check HTTP %d\n", code);
     }
 
     https.end();
+  }
+
+  return false;
+}
+
+void sendNodeStatusToNode(const uint8_t *destMac, const String &ledColor, bool tamperDetected) {
+  if (!ensurePeer(destMac)) {
+    return;
+  }
+
+  NodeStatusPayload payload = {};
+  ledColor.toCharArray(payload.led_color, sizeof(payload.led_color));
+  payload.tamper_detected = tamperDetected;
+
+  esp_err_t result = esp_now_send(destMac, (uint8_t *)&payload, sizeof(payload));
+
+  Serial.print("Sending led_color='");
+  Serial.print(ledColor);
+  Serial.print("' tamper_detected=");
+  Serial.print(tamperDetected ? "true" : "false");
+  Serial.print(" to ");
+  printMac(destMac);
+  Serial.print(" -> ");
+
+  if (result == ESP_OK) {
+    Serial.println("OK");
+  } else {
+    Serial.printf("FAIL (%d)\n", result);
   }
 }
 
@@ -346,13 +356,13 @@ void loop() {
     sendToFirebase(data);
 
     String ledColor = fetchLedColor(data.nodeId);
+    bool tamperDetected = fetchTamperStatus(data.nodeId);
+
     if (ledColor.length() > 0) {
-      sendLedColorToNode(packet.senderMac, ledColor);
+      sendNodeStatusToNode(packet.senderMac, ledColor, tamperDetected);
     } else {
       Serial.println("No led_color returned from Firebase");
     }
-
-    checkTamperStatus(data.nodeId);
   }
 
   delay(10);
