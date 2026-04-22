@@ -24,7 +24,7 @@
 
 #define MIC_DB_OFFSET 90.0f
 
-const unsigned long SEND_INTERVAL_MS = 500;
+const unsigned long SEND_INTERVAL_MS = 2000;
 const unsigned long LINK_TIMEOUT_MS = 10000;
 unsigned long lastSendTime = 0;
 unsigned long lastGatewayContactTime = 0;
@@ -92,14 +92,18 @@ void onDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData
     LedColorPayload incoming = {};
     memcpy(&incoming, incomingData, sizeof(incoming));
 
+    bool ledColorChanged = strncmp(currentLedColor, incoming.led_color, sizeof(currentLedColor)) != 0;
+
     strncpy(currentLedColor, incoming.led_color, sizeof(currentLedColor) - 1);
     currentLedColor[sizeof(currentLedColor) - 1] = '\0';
 
     ledColorReceived = true;
     lastGatewayContactTime = millis();
 
-    Serial.print("Received led_color: ");
-    Serial.println(currentLedColor);
+    if (ledColorChanged) {
+      Serial.print("Received led_color: ");
+      Serial.println(currentLedColor);
+    }
   } else {
     Serial.print("Received unexpected packet length: ");
     Serial.println(len);

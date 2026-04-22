@@ -3,8 +3,6 @@
 #include <esp_now.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
 
 #define WIFI_SSID     "EliHotspot"
 #define WIFI_PASSWORD "pink+white"
@@ -31,10 +29,22 @@ typedef struct __attribute__((packed)) {
 typedef struct {
   SensorPayload data;
   uint8_t senderMac[6];
-} QueuedSensorPacket;
+} SensorPacket;
 
-QueueHandle_t sensorQueue;
-const uint8_t SENSOR_QUEUE_DEPTH = 10;
+typedef struct {
+  bool inUse;
+  bool pending;
+  SensorPacket packet;
+  unsigned long lastProcessedAt;
+} SensorSlot;
+
+const uint8_t MAX_SENSOR_SLOTS = 4;
+const uint8_t NODE_ID_LENGTH = 16;
+const unsigned long MIN_NODE_PROCESS_INTERVAL_MS = 2000;
+
+SensorSlot sensorSlots[MAX_SENSOR_SLOTS];
+uint8_t nextSensorSlot = 0;
+portMUX_TYPE sensorSlotsMux = portMUX_INITIALIZER_UNLOCKED;
 
 void printMac(const uint8_t *mac) {
   Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",
@@ -65,26 +75,83 @@ bool ensurePeer(const uint8_t *mac) {
   return true;
 }
 
+bool sameNodeId(const char *a, const char *b) {
+  return strncmp(a, b, NODE_ID_LENGTH) == 0;
+}
+
+int findSensorSlot(const SensorPayload &data, const uint8_t *senderMac) {
+  int emptySlot = -1;
+
+  for (int i = 0; i < MAX_SENSOR_SLOTS; i++) {
+    if (!sensorSlots[i].inUse) {
+      if (emptySlot < 0) {
+        emptySlot = i;
+      }
+      continue;
+    }
+
+    if (sameNodeId(sensorSlots[i].packet.data.nodeId, data.nodeId) ||
+        memcmp(sensorSlots[i].packet.senderMac, senderMac, 6) == 0) {
+      return i;
+    }
+  }
+
+  if (emptySlot >= 0) {
+    return emptySlot;
+  }
+
+  return 0;
+}
+
+void storeLatestSensorPacket(const esp_now_recv_info_t *info, const uint8_t *data) {
+  SensorPayload payload = {};
+  memcpy(&payload, data, sizeof(SensorPayload));
+
+  portENTER_CRITICAL(&sensorSlotsMux);
+  int slotIndex = findSensorSlot(payload, info->src_addr);
+  sensorSlots[slotIndex].inUse = true;
+  sensorSlots[slotIndex].pending = true;
+  sensorSlots[slotIndex].packet.data = payload;
+  memcpy(sensorSlots[slotIndex].packet.senderMac, info->src_addr, 6);
+  portEXIT_CRITICAL(&sensorSlotsMux);
+}
+
+bool takeNextDueSensorPacket(SensorPacket &packet) {
+  unsigned long now = millis();
+
+  portENTER_CRITICAL(&sensorSlotsMux);
+  for (int offset = 0; offset < MAX_SENSOR_SLOTS; offset++) {
+    uint8_t slotIndex = (nextSensorSlot + offset) % MAX_SENSOR_SLOTS;
+    SensorSlot &slot = sensorSlots[slotIndex];
+
+    if (!slot.inUse || !slot.pending) {
+      continue;
+    }
+
+    if (slot.lastProcessedAt != 0 &&
+        now - slot.lastProcessedAt < MIN_NODE_PROCESS_INTERVAL_MS) {
+      continue;
+    }
+
+    packet = slot.packet;
+    slot.pending = false;
+    slot.lastProcessedAt = now;
+    nextSensorSlot = (slotIndex + 1) % MAX_SENSOR_SLOTS;
+    portEXIT_CRITICAL(&sensorSlotsMux);
+    return true;
+  }
+  portEXIT_CRITICAL(&sensorSlotsMux);
+
+  return false;
+}
+
 void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len != sizeof(SensorPayload)) {
     Serial.printf("Bad packet: got %d bytes, expected %d\n", len, sizeof(SensorPayload));
     return;
   }
 
-  QueuedSensorPacket packet = {};
-  memcpy(&packet.data, data, sizeof(SensorPayload));
-  memcpy(packet.senderMac, info->src_addr, 6);
-
-  if (sensorQueue == nullptr || xQueueSend(sensorQueue, &packet, 0) != pdTRUE) {
-    Serial.print("Sensor queue full, dropped packet from ");
-    printMac(info->src_addr);
-    Serial.println();
-    return;
-  }
-
-  Serial.print("RX from ");
-  printMac(info->src_addr);
-  Serial.println();
+  storeLatestSensorPacket(info, data);
 }
 
 void connectToWiFi() {
@@ -260,25 +327,14 @@ void setup() {
     return;
   }
 
-  sensorQueue = xQueueCreate(SENSOR_QUEUE_DEPTH, sizeof(QueuedSensorPacket));
-  if (sensorQueue == nullptr) {
-    Serial.println("Sensor queue creation failed!");
-    return;
-  }
-
   esp_now_register_recv_cb(onDataRecv);
 
   Serial.println("Gateway ready — waiting for ESP-NOW data...\n");
 }
 
 void loop() {
-  if (sensorQueue == nullptr) {
-    delay(100);
-    return;
-  }
-
-  QueuedSensorPacket packet = {};
-  if (xQueueReceive(sensorQueue, &packet, 0) == pdTRUE) {
+  SensorPacket packet = {};
+  if (takeNextDueSensorPacket(packet)) {
     SensorPayload data = packet.data;
 
     Serial.printf("RX: node=%s ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f\n",
