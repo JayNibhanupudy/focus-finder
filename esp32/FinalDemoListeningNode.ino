@@ -29,7 +29,7 @@ const unsigned long LINK_TIMEOUT_MS = 10000;
 unsigned long lastSendTime = 0;
 unsigned long lastGatewayContactTime = 0;
 
-uint8_t gatewayMAC[] = {0x6C, 0xC8, 0x40, 0x78, 0xEB, 0xC0};
+uint8_t gatewayMAC[] = {0x6C, 0xC8, 0x40, 0x77, 0x6D, 0x0C};
 
 bool ledColorReceived = false;
 char currentLedColor[16] = "";
@@ -293,7 +293,7 @@ void loop() {
   }
 
   SensorPayload data = {};
-  strncpy(data.nodeId, "node_02", sizeof(data.nodeId));
+  strncpy(data.nodeId, "node_01", sizeof(data.nodeId));
   data.accel_x = accelX / 16384.0;
   data.accel_y = accelY / 16384.0;
   data.accel_z = accelZ / 16384.0;
