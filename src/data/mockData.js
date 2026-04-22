@@ -23,7 +23,7 @@ export const zones = [
 // node_01–03 are live Firebase nodes; node_04+ are not yet deployed (mock only)
 export const nodes = [
   { id: 'NODE-001', firebaseId: 'node_01', zoneId: 'MS-2-OA',  status: 'online', tamper: false, battery: 87 },
-  { id: 'NODE-002', firebaseId: 'node_02', zoneId: 'MS-1-CC',  status: 'online', tamper: false, battery: 92 },
+  { id: 'NODE-002', firebaseId: 'node_02', zoneId: 'MS-2-EA',  status: 'online', tamper: false, battery: 92 },
   { id: 'NODE-003', firebaseId: 'node_03', zoneId: 'MS-3-PC',  status: 'online', tamper: false, battery: 78 },
   { id: 'NODE-004', firebaseId: 'node_04', zoneId: 'MS-1-CL',  status: 'online', tamper: false, battery: 71 },
   { id: 'NODE-005', firebaseId: 'node_05', zoneId: 'MS-1-MK',  status: 'online', tamper: false, battery: 65 },
@@ -33,7 +33,7 @@ export const nodes = [
   { id: 'NODE-009', firebaseId: 'node_09', zoneId: 'MS-2-SR',  status: 'online', tamper: false, battery: 73 },
   { id: 'NODE-010', firebaseId: 'node_10', zoneId: 'MS-3-OA',  status: 'online', tamper: false, battery: 80 },
   { id: 'NODE-011', firebaseId: 'node_11', zoneId: 'MS-3-TD',  status: 'online', tamper: false, battery: 85 },
-  { id: 'NODE-012', firebaseId: 'node_12', zoneId: 'MS-2-EA',  status: 'online', tamper: false, battery: 82 },
+  { id: 'NODE-012', firebaseId: 'node_12', zoneId: 'MS-1-CC',  status: 'online', tamper: false, battery: 82 },
 ];
 
 // ─── Floor metadata ───────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ export const floorPlans = {
       // ── Upper area – Service Desk (central landmark) ───────────────────────
       { roomId: 'ms2-svc', x: 199, y: 11, w: 90,  h: 130, label: 'Service Desk', interactive: false, fill: '#DCDCDC' },
 
-      // ── Upper area – East of Service Desk ─────────────────────────────────
+      // ── Upper area – East of Service Desk (East Study, node_02 live) ──────
       { roomId: 'ms2-ea',  zoneId: 'MS-2-EA', x: 295, y: 11, w: 64,  h: 130, label: 'East Study',   interactive: true, showStats: true },
 
       // ── Upper area – Study Rooms 201 (far right, rotated) ─────────────────
