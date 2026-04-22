@@ -26,9 +26,25 @@ typedef struct __attribute__((packed)) {
   char led_color[16];
 } LedColorPayload;
 
-volatile bool newDataReady = false;
-SensorPayload latestData;
-uint8_t latestSenderMac[6];
+typedef struct {
+  SensorPayload data;
+  uint8_t senderMac[6];
+} SensorPacket;
+
+typedef struct {
+  bool inUse;
+  bool pending;
+  SensorPacket packet;
+  unsigned long lastProcessedAt;
+} SensorSlot;
+
+const uint8_t MAX_SENSOR_SLOTS = 4;
+const uint8_t NODE_ID_LENGTH = 16;
+const unsigned long MIN_NODE_PROCESS_INTERVAL_MS = 2000;
+
+SensorSlot sensorSlots[MAX_SENSOR_SLOTS];
+uint8_t nextSensorSlot = 0;
+portMUX_TYPE sensorSlotsMux = portMUX_INITIALIZER_UNLOCKED;
 
 void printMac(const uint8_t *mac) {
   Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",
@@ -59,19 +75,83 @@ bool ensurePeer(const uint8_t *mac) {
   return true;
 }
 
+bool sameNodeId(const char *a, const char *b) {
+  return strncmp(a, b, NODE_ID_LENGTH) == 0;
+}
+
+int findSensorSlot(const SensorPayload &data, const uint8_t *senderMac) {
+  int emptySlot = -1;
+
+  for (int i = 0; i < MAX_SENSOR_SLOTS; i++) {
+    if (!sensorSlots[i].inUse) {
+      if (emptySlot < 0) {
+        emptySlot = i;
+      }
+      continue;
+    }
+
+    if (sameNodeId(sensorSlots[i].packet.data.nodeId, data.nodeId) ||
+        memcmp(sensorSlots[i].packet.senderMac, senderMac, 6) == 0) {
+      return i;
+    }
+  }
+
+  if (emptySlot >= 0) {
+    return emptySlot;
+  }
+
+  return 0;
+}
+
+void storeLatestSensorPacket(const esp_now_recv_info_t *info, const uint8_t *data) {
+  SensorPayload payload = {};
+  memcpy(&payload, data, sizeof(SensorPayload));
+
+  portENTER_CRITICAL(&sensorSlotsMux);
+  int slotIndex = findSensorSlot(payload, info->src_addr);
+  sensorSlots[slotIndex].inUse = true;
+  sensorSlots[slotIndex].pending = true;
+  sensorSlots[slotIndex].packet.data = payload;
+  memcpy(sensorSlots[slotIndex].packet.senderMac, info->src_addr, 6);
+  portEXIT_CRITICAL(&sensorSlotsMux);
+}
+
+bool takeNextDueSensorPacket(SensorPacket &packet) {
+  unsigned long now = millis();
+
+  portENTER_CRITICAL(&sensorSlotsMux);
+  for (int offset = 0; offset < MAX_SENSOR_SLOTS; offset++) {
+    uint8_t slotIndex = (nextSensorSlot + offset) % MAX_SENSOR_SLOTS;
+    SensorSlot &slot = sensorSlots[slotIndex];
+
+    if (!slot.inUse || !slot.pending) {
+      continue;
+    }
+
+    if (slot.lastProcessedAt != 0 &&
+        now - slot.lastProcessedAt < MIN_NODE_PROCESS_INTERVAL_MS) {
+      continue;
+    }
+
+    packet = slot.packet;
+    slot.pending = false;
+    slot.lastProcessedAt = now;
+    nextSensorSlot = (slotIndex + 1) % MAX_SENSOR_SLOTS;
+    portEXIT_CRITICAL(&sensorSlotsMux);
+    return true;
+  }
+  portEXIT_CRITICAL(&sensorSlotsMux);
+
+  return false;
+}
+
 void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (len != sizeof(SensorPayload)) {
     Serial.printf("Bad packet: got %d bytes, expected %d\n", len, sizeof(SensorPayload));
     return;
   }
 
-  memcpy(&latestData, data, sizeof(SensorPayload));
-  memcpy(latestSenderMac, info->src_addr, 6);
-  newDataReady = true;
-
-  Serial.print("RX from ");
-  printMac(info->src_addr);
-  Serial.println();
+  storeLatestSensorPacket(info, data);
 }
 
 void connectToWiFi() {
@@ -253,25 +333,26 @@ void setup() {
 }
 
 void loop() {
-  if (newDataReady) {
-    newDataReady = false;
+  SensorPacket packet = {};
+  if (takeNextDueSensorPacket(packet)) {
+    SensorPayload data = packet.data;
 
     Serial.printf("RX: node=%s ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f\n",
-      latestData.nodeId,
-      latestData.accel_x, latestData.accel_y, latestData.accel_z,
-      latestData.gyro_x, latestData.gyro_y, latestData.gyro_z,
-      latestData.noise_db, latestData.distance_cm);
+      data.nodeId,
+      data.accel_x, data.accel_y, data.accel_z,
+      data.gyro_x, data.gyro_y, data.gyro_z,
+      data.noise_db, data.distance_cm);
 
-    sendToFirebase(latestData);
+    sendToFirebase(data);
 
-    String ledColor = fetchLedColor(latestData.nodeId);
+    String ledColor = fetchLedColor(data.nodeId);
     if (ledColor.length() > 0) {
-      sendLedColorToNode(latestSenderMac, ledColor);
+      sendLedColorToNode(packet.senderMac, ledColor);
     } else {
       Serial.println("No led_color returned from Firebase");
     }
 
-    checkTamperStatus(latestData.nodeId);
+    checkTamperStatus(data.nodeId);
   }
 
   delay(10);
