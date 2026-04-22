@@ -3,6 +3,8 @@
 #include <esp_now.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 #define WIFI_SSID     "EliHotspot"
 #define WIFI_PASSWORD "pink+white"
@@ -26,9 +28,13 @@ typedef struct __attribute__((packed)) {
   char led_color[16];
 } LedColorPayload;
 
-volatile bool newDataReady = false;
-SensorPayload latestData;
-uint8_t latestSenderMac[6];
+typedef struct {
+  SensorPayload data;
+  uint8_t senderMac[6];
+} QueuedSensorPacket;
+
+QueueHandle_t sensorQueue;
+const uint8_t SENSOR_QUEUE_DEPTH = 10;
 
 void printMac(const uint8_t *mac) {
   Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",
@@ -65,9 +71,16 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
     return;
   }
 
-  memcpy(&latestData, data, sizeof(SensorPayload));
-  memcpy(latestSenderMac, info->src_addr, 6);
-  newDataReady = true;
+  QueuedSensorPacket packet = {};
+  memcpy(&packet.data, data, sizeof(SensorPayload));
+  memcpy(packet.senderMac, info->src_addr, 6);
+
+  if (sensorQueue == nullptr || xQueueSend(sensorQueue, &packet, 0) != pdTRUE) {
+    Serial.print("Sensor queue full, dropped packet from ");
+    printMac(info->src_addr);
+    Serial.println();
+    return;
+  }
 
   Serial.print("RX from ");
   printMac(info->src_addr);
@@ -247,31 +260,43 @@ void setup() {
     return;
   }
 
+  sensorQueue = xQueueCreate(SENSOR_QUEUE_DEPTH, sizeof(QueuedSensorPacket));
+  if (sensorQueue == nullptr) {
+    Serial.println("Sensor queue creation failed!");
+    return;
+  }
+
   esp_now_register_recv_cb(onDataRecv);
 
   Serial.println("Gateway ready — waiting for ESP-NOW data...\n");
 }
 
 void loop() {
-  if (newDataReady) {
-    newDataReady = false;
+  if (sensorQueue == nullptr) {
+    delay(100);
+    return;
+  }
+
+  QueuedSensorPacket packet = {};
+  if (xQueueReceive(sensorQueue, &packet, 0) == pdTRUE) {
+    SensorPayload data = packet.data;
 
     Serial.printf("RX: node=%s ax=%.3f ay=%.3f az=%.3f gx=%.1f gy=%.1f gz=%.1f noise_db=%.2f dist=%.1f\n",
-      latestData.nodeId,
-      latestData.accel_x, latestData.accel_y, latestData.accel_z,
-      latestData.gyro_x, latestData.gyro_y, latestData.gyro_z,
-      latestData.noise_db, latestData.distance_cm);
+      data.nodeId,
+      data.accel_x, data.accel_y, data.accel_z,
+      data.gyro_x, data.gyro_y, data.gyro_z,
+      data.noise_db, data.distance_cm);
 
-    sendToFirebase(latestData);
+    sendToFirebase(data);
 
-    String ledColor = fetchLedColor(latestData.nodeId);
+    String ledColor = fetchLedColor(data.nodeId);
     if (ledColor.length() > 0) {
-      sendLedColorToNode(latestSenderMac, ledColor);
+      sendLedColorToNode(packet.senderMac, ledColor);
     } else {
       Serial.println("No led_color returned from Firebase");
     }
 
-    checkTamperStatus(latestData.nodeId);
+    checkTamperStatus(data.nodeId);
   }
 
   delay(10);
